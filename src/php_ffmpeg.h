@@ -15,6 +15,8 @@
 
 #define _FFMPEG_PHP_H_
 
+#include <stdbool.h>
+
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
 #include "php.h"
@@ -41,5 +43,7 @@ ZEND_MINIT_FUNCTION(ffmpeg);
 ZEND_MSHUTDOWN_FUNCTION(ffmpeg);
 ZEND_METHOD(ffmpeg, __construct);
 ZEND_METHOD(ffmpeg, get_media_duration);
+ZEND_METHOD(ffmpeg, has_video);
+ZEND_METHOD(ffmpeg, has_audio);
 
 #endif
