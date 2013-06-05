@@ -16,6 +16,8 @@
 #define _FFMPEG_PHP_H_
 
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
@@ -45,5 +47,11 @@ ZEND_METHOD(ffmpeg, __construct);
 ZEND_METHOD(ffmpeg, get_media_duration);
 ZEND_METHOD(ffmpeg, has_video);
 ZEND_METHOD(ffmpeg, has_audio);
+ZEND_METHOD(ffmpeg, get_media_video_bitrate);
+ZEND_METHOD(ffmpeg, get_media_audio_bitrate);
+ZEND_METHOD(ffmpeg, get_media_frame_height);
+ZEND_METHOD(ffmpeg, get_media_frame_width);
+ZEND_METHOD(ffmpeg, get_media_video_codec);
+ZEND_METHOD(ffmpeg, get_media_audio_codec);
 
 #endif

@@ -13,6 +13,12 @@ zend_function_entry ffmpeg_class_functions_entry[] = {
     ZEND_ME(ffmpeg, get_media_duration, NULL, 0)
     ZEND_ME(ffmpeg, has_video, NULL, 0)
     ZEND_ME(ffmpeg, has_audio, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_video_bitrate, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_audio_bitrate, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_frame_height, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_frame_width, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_video_codec, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_audio_codec, NULL, 0)
     {NULL, NULL, NULL, 0, 0}
 };
 
@@ -28,10 +34,12 @@ static void _ffmpeg_media_free_context(struct ffmpeg_media_context *pfmctx);
 static void _php_ffmpeg_media_free_context(zend_rsrc_list_entry *rsrc TSRMLS_DC);
 
 static int _ffmpeg_media_fetch_resource(struct ffmpeg_media_context* pfmctx);
-static int _ffmpeg_media_get_streams_count(AVFormatContext *av_fmt_ctx);
-static AVStream* _ffmpeg_media_get_streams(AVFormatContext *av_fmt_ctx, int stream_index);
-static uint64_t _ffmpeg_media_get_duration(AVFormatContext *av_fmt_ctx);
+static AVStream* _ffmpeg_media_get_streams(struct AVFormatContext *av_fmt_ctx, int stream_index);
+static uint64_t _ffmpeg_media_get_duration(struct AVFormatContext *av_fmt_ctx);
 static bool _ffmpeg_media_has_media_type(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type);
+static double _ffmpeg_media_get_bitrate(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type);
+static long _ffmpeg_media_get_video_frame_shape(struct AVFormatContext *av_fmt_ctx, const char* shape_name);
+static char* _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type);
 
 // alloc memory for ffmpeg AVFormatContext
 static ffmpeg_media_context* _ffmpeg_media_context_malloc_mem()
@@ -51,6 +59,11 @@ static ffmpeg_media_context* _ffmpeg_media_context_malloc_mem()
 static int _ffmpeg_media_open_context(struct ffmpeg_media_context *pfmctx, const char *uri_name)
 {
     int res = 0;
+    int index = 0;
+    int stream_count = 0;
+    struct AVFormatContext *av_fmt_ctx = NULL;
+    struct AVStream *av_stream = NULL;
+    struct AVCodecContext *av_ctx = NULL;
 
     // check ffmpeg media context
     if (pfmctx == NULL) {
@@ -80,22 +93,47 @@ static int _ffmpeg_media_open_context(struct ffmpeg_media_context *pfmctx, const
         return -1;
     }
 
+     // get stream count and judge to next step
+     av_fmt_ctx = pfmctx->av_fmt_ctx;
+     stream_count = av_fmt_ctx->nb_streams;
+     if (stream_count <= 0) {
+         zend_error(E_ERROR, "stream count is invalid.\n");
+         return -1;
+     }
+
      // open and find stream info
-     res = avformat_find_stream_info(pfmctx->av_fmt_ctx, NULL);
+     res = avformat_find_stream_info(av_fmt_ctx, NULL);
      if (res < 0) {
          zend_error(E_ERROR, "can not find media stream information.\n");
-         avfree(pfmctx->av_fmt_ctx);
+         avformat_close_input(&av_fmt_ctx);
          pfmctx->av_fmt_ctx = NULL;
          return -1;
      }
 
-    return 0;
-}
+     for (index = 0; index < stream_count; index ++) {
+         struct AVCodec *av_codec = NULL;
+         av_stream = av_fmt_ctx->streams[index];
+         av_ctx = av_stream->codec;
 
-// get total streams count
-static int _ffmpeg_media_get_streams_count(AVFormatContext *av_fmt_ctx)
-{
-    return av_fmt_ctx->nb_streams;
+         if (av_ctx->codec_id == CODEC_ID_NONE) {
+             zend_error(E_ERROR, "can not get media file decoder id.\n");
+             return -1;
+         } else {
+             av_codec = avcodec_find_decoder(av_ctx->codec_id);
+             if (av_codec == NULL) {
+                 zend_error(E_ERROR, "can not find decoder by decoder id");
+                 return -1;
+             }
+
+             res = avcodec_open2(av_ctx, av_codec, NULL);
+             if (res < 0) {
+                 zend_error(E_ERROR, "can not open decoder.\n");
+                 return -1;
+             }
+         }
+     }
+
+    return 0;
 }
 
 // get stream information by stream index
@@ -120,13 +158,27 @@ static AVStream* _ffmpeg_media_get_streams(AVFormatContext *av_fmt_ctx, int stre
 // a destructor of free self define context
 static void _ffmpeg_media_free_context(struct ffmpeg_media_context *pfmctx)
 {
+    int index = 0;
+    int stream_count = 0;
+    struct AVFormatContext *av_fmt_ctx = NULL;
+    struct AVCodecContext *av_ctx = NULL;
+
     if (pfmctx && pfmctx->av_fmt_ctx) {
-        avformat_close_input(&(pfmctx->av_fmt_ctx));
-        pfmctx->av_fmt_ctx = NULL;
+        av_fmt_ctx = pfmctx->av_fmt_ctx;
+        stream_count = av_fmt_ctx->nb_streams;
+
+        for (index = 0; index < stream_count; index++) {
+            av_ctx = av_fmt_ctx->streams[index]->codec;
+            avcodec_close(av_ctx);
+        }
+
+        avformat_close_input(&av_fmt_ctx);
+        av_fmt_ctx = NULL;
         efree(pfmctx);
     }
 }
 
+// free media alloc memory
 static void _php_ffmpeg_media_free_context(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 {
     struct ffmpeg_media_context *pfmctx = NULL;
@@ -144,12 +196,13 @@ static uint64_t _ffmpeg_media_get_duration(AVFormatContext *av_fmt_ctx)
     }
 }
 
+// check if media file has video or audio
 static bool _ffmpeg_media_has_media_type(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type)
 {
     bool has_media_type = false;
     int index = 0;
     int stream_count = 0;
-    AVCodecContext *pstream_codec = NULL;
+    struct AVCodecContext *pstream_codec = NULL;
 
     if (av_fmt_ctx == NULL) {
         return false;
@@ -164,6 +217,96 @@ static bool _ffmpeg_media_has_media_type(struct AVFormatContext *av_fmt_ctx, enu
         }
         return has_media_type;
     }
+}
+
+// get video and audio bitrate
+static double _ffmpeg_media_get_bitrate(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type)
+{
+    bool has_media_type = false;
+    int index = 0;
+    int stream_count = 0;
+    double media_bitrate = 0.0;
+    struct AVCodecContext *pstream_codec = NULL;
+
+    if (av_fmt_ctx == NULL) {
+        return 0.0;
+    } else {
+        stream_count = av_fmt_ctx->nb_streams;
+        for (index = 0; index < stream_count; index ++) {
+            pstream_codec = av_fmt_ctx->streams[index]->codec;
+            if (pstream_codec->codec_type == media_type) {
+                has_media_type == true;
+                media_bitrate = (double) av_fmt_ctx->streams[index]->codec->bit_rate;
+                break;
+            }
+        }
+    }
+
+    return media_bitrate;
+}
+
+// get video width and height
+static long _ffmpeg_media_get_video_frame_shape(struct AVFormatContext *av_fmt_ctx, const char* shape_name)
+{
+    bool has_video = false;
+    int index = 0;
+    int stream_count = 0;
+    int shape_value = 0;
+    struct AVCodecContext *pstream_codec = NULL;
+
+    if (av_fmt_ctx == NULL) {
+        return 0;
+    } else {
+        stream_count = av_fmt_ctx->nb_streams;
+        for (index = 0; index < stream_count; index ++) {
+            pstream_codec = av_fmt_ctx->streams[index]->codec;
+            if (pstream_codec->codec_type == AVMEDIA_TYPE_VIDEO) {
+                has_video = true;
+                break;
+            }
+        }
+
+        if (has_video == false) {
+            return 0;
+        } else {
+           if (strcmp(shape_name, "width")) {
+               return av_fmt_ctx->streams[index]->codec->width;
+           } else if (strcmp(shape_name, "height")) {
+               return av_fmt_ctx->streams[index]->codec->height;
+           } else {
+               return 0;
+           }
+        }
+    }
+}
+
+// get video codec name or audio codec name
+static char* _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type)
+{
+    int index = 0;
+    int stream_count = 0;
+    char codec_name[32] = {0};
+    struct AVStream *av_stream = NULL;
+    struct AVCodecContext *av_ctx = NULL;
+    struct AVCodec *av_codec = NULL;
+
+    if (av_fmt_ctx == NULL 
+                || media_type != AVMEDIA_TYPE_VIDEO 
+                || media_type != AVMEDIA_TYPE_AUDIO) {
+        return NULL;
+    }
+
+    stream_count = av_fmt_ctx->nb_streams;
+    for (index = 0; index < stream_count; ++ index) {
+        av_stream = av_fmt_ctx->streams[index];
+        av_ctx = av_stream->codec;
+        if (av_ctx->codec_type == media_type) {
+            av_codec = av_ctx->codec;
+            snprintf(codec_name, sizeof(codec_name), "%s", (const char*)av_codec->name);
+        }
+    }
+
+    return codec_name;
 }
 
 void _ffmpeg_media_register_class(int module_number)
@@ -265,4 +408,106 @@ ZEND_METHOD(ffmpeg, has_audio)
     }
 
     RETURN_BOOL(_ffmpeg_media_has_media_type(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO));
+}
+
+ZEND_METHOD(ffmpeg, get_media_video_bitrate)
+{
+    int res = 0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_DOUBLE(_ffmpeg_media_get_bitrate(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO));
+}
+
+ZEND_METHOD(ffmpeg, get_media_audio_bitrate)
+{
+    int res = 0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_DOUBLE(_ffmpeg_media_get_bitrate(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO));
+}
+
+ZEND_METHOD(ffmpeg, get_media_frame_height)
+{
+    int res = 0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_LONG(_ffmpeg_media_get_video_frame_shape(pfmctx->av_fmt_ctx, "height"));
+}
+
+ZEND_METHOD(ffmpeg, get_media_frame_width)
+{
+    int res = 0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_LONG(_ffmpeg_media_get_video_frame_shape(pfmctx->av_fmt_ctx, "width"));
+}
+
+ZEND_METHOD(ffmpeg, get_media_video_codec)
+{
+    int res = 0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_STRING(_ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO), 0);
+}
+
+ZEND_METHOD(ffmpeg, get_media_audio_codec)
+{
+    int res = 0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_STRING(_ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO), 0);
 }
