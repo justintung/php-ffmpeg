@@ -39,7 +39,7 @@ static uint64_t _ffmpeg_media_get_duration(struct AVFormatContext *av_fmt_ctx);
 static bool _ffmpeg_media_has_media_type(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type);
 static double _ffmpeg_media_get_bitrate(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type);
 static long _ffmpeg_media_get_video_frame_shape(struct AVFormatContext *av_fmt_ctx, const char* shape_name);
-static char* _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type);
+static void _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type, char *codec_name);
 
 // alloc memory for ffmpeg AVFormatContext
 static ffmpeg_media_context* _ffmpeg_media_context_malloc_mem()
@@ -281,19 +281,23 @@ static long _ffmpeg_media_get_video_frame_shape(struct AVFormatContext *av_fmt_c
 }
 
 // get video codec name or audio codec name
-static char* _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type)
+static void _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type, char *codec_name)
 {
     int index = 0;
     int stream_count = 0;
-    char codec_name[32] = {0};
     struct AVStream *av_stream = NULL;
     struct AVCodecContext *av_ctx = NULL;
     struct AVCodec *av_codec = NULL;
 
+    if (codec_name == NULL) {
+        return;
+    }
+
     if (av_fmt_ctx == NULL 
                 || media_type != AVMEDIA_TYPE_VIDEO 
                 || media_type != AVMEDIA_TYPE_AUDIO) {
-        return NULL;
+        strncpy(codec_name, "", strlen(""));
+        return;
     }
 
     stream_count = av_fmt_ctx->nb_streams;
@@ -302,11 +306,12 @@ static char* _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, en
         av_ctx = av_stream->codec;
         if (av_ctx->codec_type == media_type) {
             av_codec = av_ctx->codec;
-            snprintf(codec_name, sizeof(codec_name), "%s", (const char*)av_codec->name);
+            strncpy(codec_name, av_codec->name, strlen(av_codec->name));
+            return;
         }
     }
 
-    return codec_name;
+    return;
 }
 
 void _ffmpeg_media_register_class(int module_number)
@@ -482,6 +487,7 @@ ZEND_METHOD(ffmpeg, get_media_video_codec)
 {
     int res = 0;
     zval **resource = NULL;
+    char codec_name[32] = {0};
     struct ffmpeg_media_context *pfmctx = NULL;
 
     res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
@@ -492,13 +498,15 @@ ZEND_METHOD(ffmpeg, get_media_video_codec)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_STRING(_ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO), 0);
+    _ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO, codec_name);
+    RETURN_STRING(codec_name, 0);
 }
 
 ZEND_METHOD(ffmpeg, get_media_audio_codec)
 {
     int res = 0;
     zval **resource = NULL;
+    char codec_name[32] = {0};
     struct ffmpeg_media_context *pfmctx = NULL;
 
     res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
@@ -509,5 +517,6 @@ ZEND_METHOD(ffmpeg, get_media_audio_codec)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_STRING(_ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO), 0);
+    _ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO, codec_name);
+    RETURN_STRING(codec_name, 0);
 }
