@@ -173,7 +173,6 @@ static void _ffmpeg_media_free_context(struct ffmpeg_media_context *pfmctx)
         }
 
         avformat_close_input(&av_fmt_ctx);
-        av_fmt_ctx = NULL;
         efree(pfmctx);
     }
 }
@@ -293,9 +292,8 @@ static void _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enu
         return;
     }
 
-    if (av_fmt_ctx == NULL 
-                || media_type != AVMEDIA_TYPE_VIDEO 
-                || media_type != AVMEDIA_TYPE_AUDIO) {
+    if (av_fmt_ctx == NULL
+        || (media_type != AVMEDIA_TYPE_VIDEO && media_type != AVMEDIA_TYPE_AUDIO)) {
         strncpy(codec_name, "", strlen(""));
         return;
     }
@@ -487,7 +485,7 @@ ZEND_METHOD(ffmpeg, get_media_video_codec)
 {
     int res = 0;
     zval **resource = NULL;
-    char codec_name[32] = {0};
+    char codec_name[32] = "";
     struct ffmpeg_media_context *pfmctx = NULL;
 
     res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
@@ -498,15 +496,15 @@ ZEND_METHOD(ffmpeg, get_media_video_codec)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    _ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO, codec_name);
-    RETURN_STRING(codec_name, 0);
+    _ffmpeg_media_get_codec_name(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO, codec_name);
+    RETURN_STRINGL(codec_name, strlen(codec_name), true); // use RETURN_STRINGL is more safe and avoid the segement fault
 }
 
 ZEND_METHOD(ffmpeg, get_media_audio_codec)
 {
     int res = 0;
     zval **resource = NULL;
-    char codec_name[32] = {0};
+    char codec_name[32] = "";
     struct ffmpeg_media_context *pfmctx = NULL;
 
     res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
@@ -517,6 +515,6 @@ ZEND_METHOD(ffmpeg, get_media_audio_codec)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    _ffmpeg_media_get_media_codec(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO, codec_name);
-    RETURN_STRING(codec_name, 0);
+    _ffmpeg_media_get_codec_name(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO, codec_name);
+    RETURN_STRINGL(codec_name, strlen(codec_name), true); // use RETURN_STRINGL is more safe and avoid the segement fault
 }
