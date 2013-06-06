@@ -19,6 +19,7 @@ zend_function_entry ffmpeg_class_functions_entry[] = {
     ZEND_ME(ffmpeg, get_media_frame_width, NULL, 0)
     ZEND_ME(ffmpeg, get_media_video_codec, NULL, 0)
     ZEND_ME(ffmpeg, get_media_audio_codec, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_frame_rate, NULL, 0)
     {NULL, NULL, NULL, 0, 0}
 };
 
@@ -40,6 +41,7 @@ static bool _ffmpeg_media_has_media_type(struct AVFormatContext *av_fmt_ctx, enu
 static double _ffmpeg_media_get_bitrate(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type);
 static long _ffmpeg_media_get_video_frame_shape(struct AVFormatContext *av_fmt_ctx, const char* shape_name);
 static void _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enum AVMediaType media_type, char *codec_name);
+static double _ffmpeg_media_get_framerate(struct AVFormatContext *av_fmt_ctx);
 
 // alloc memory for ffmpeg AVFormatContext
 static ffmpeg_media_context* _ffmpeg_media_context_malloc_mem()
@@ -312,6 +314,47 @@ static void _ffmpeg_media_get_codec_name(struct AVFormatContext *av_fmt_ctx, enu
     return;
 }
 
+static double _ffmpeg_media_get_framerate(struct AVFormatContext *av_fmt_ctx)
+{
+    int index = 0;
+    int stream_count = 0;
+    double frame_rate = 0.0;
+    struct AVStream *pstream = NULL;
+    struct AVCodecContext *pctx = NULL;
+
+    if (av_fmt_ctx == NULL) {
+        return 0.0;
+    } else {
+        stream_count = av_fmt_ctx->nb_streams;
+        if (stream_count <= 0) {
+            return 0.0;
+        } else {
+            for (index = 0; index < stream_count; ++ index) {
+                pstream = av_fmt_ctx->streams[index];
+                pctx = pstream->codec;
+                if (pctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+                    if (pstream->r_frame_rate.den && pstream->r_frame_rate.num) {
+                        frame_rate = av_q2d(pstream->r_frame_rate);
+                        break;
+                    }
+
+                    if (pstream->time_base.den && pstream->time_base.num) {
+                        frame_rate = 1.0 / av_q2d(pstream->time_base);
+                        break;
+                    }
+
+                    if (pstream->codec->time_base.den && pstream->codec->time_base.num) {
+                        frame_rate = 1.0 / av_q2d(pstream->codec->time_base);
+                        break;
+                    }
+                }
+            }
+
+            return frame_rate;
+        }
+    }
+}
+
 void _ffmpeg_media_register_class(int module_number)
 {
     // register class and method
@@ -517,4 +560,22 @@ ZEND_METHOD(ffmpeg, get_media_audio_codec)
 
     _ffmpeg_media_get_codec_name(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO, codec_name);
     RETURN_STRINGL(codec_name, strlen(codec_name), true); // use RETURN_STRINGL is more safe and avoid the segement fault
+}
+
+ZEND_METHOD(ffmpeg, get_media_frame_rate)
+{
+    int res = 0;
+    double frame_rate = 0.0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_DOUBLE(_ffmpeg_media_get_framerate(pfmctx->av_fmt_ctx));
 }

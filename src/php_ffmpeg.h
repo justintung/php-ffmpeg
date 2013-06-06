@@ -53,5 +53,6 @@ ZEND_METHOD(ffmpeg, get_media_frame_height);
 ZEND_METHOD(ffmpeg, get_media_frame_width);
 ZEND_METHOD(ffmpeg, get_media_video_codec);
 ZEND_METHOD(ffmpeg, get_media_audio_codec);
+ZEND_METHOD(ffmpeg, get_media_frame_rate);
 
 #endif
