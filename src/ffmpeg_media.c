@@ -118,8 +118,7 @@ static int _ffmpeg_media_open_context(struct ffmpeg_media_context *pfmctx, const
          av_ctx = av_stream->codec;
 
          if (av_ctx->codec_id == CODEC_ID_NONE) {
-             zend_error(E_ERROR, "can not get media file decoder id.\n");
-             return -1;
+             continue;
          } else {
              av_codec = avcodec_find_decoder(av_ctx->codec_id);
              if (av_codec == NULL) {
