@@ -65,6 +65,7 @@ static int _ffmpeg_media_open_context(struct ffmpeg_media_context *pfmctx, const
     int res = 0;
     int index = 0;
     int stream_count = 0;
+    int audio_stream_count = 0;
     struct AVFormatContext *av_fmt_ctx = NULL;
     struct AVStream *av_stream = NULL;
     struct AVCodecContext *av_ctx = NULL;
@@ -115,27 +116,91 @@ static int _ffmpeg_media_open_context(struct ffmpeg_media_context *pfmctx, const
          return -1;
      }
 
-     for (index = 0; index < stream_count; index ++) {
-         struct AVCodec *av_codec = NULL;
-         av_stream = av_fmt_ctx->streams[index];
-         av_ctx = av_stream->codec;
-         cid = av_ctx->codec_id;
-         if (cid == CODEC_ID_NONE) {
-             continue;
-         } else {
-             av_codec = avcodec_find_decoder(cid);
-             if (av_codec == NULL) {
-                 zend_error(E_ERROR, "can not find decoder by decoder id.\n");
-                 return -1;
-             }
+    // initialize ffmpeg_media_context data;
+    pfmctx->has_video = false;
+    pfmctx->has_audio = false;
+    pfmctx->has_extra_audio = false;
 
-             res = avcodec_open2(av_ctx, av_codec, NULL);
-             if (res < 0) {
-                 zend_error(E_ERROR, "can not open decoder.\n");
-                 return -1;
-             }
-         }
-     }
+    // initialize video part
+    pfmctx->duration = 0;
+    pfmctx->video_stream_index = -1;
+    pfmctx->width = 0;
+    pfmctx->height = 0;
+    pfmctx->video_bitrate = 0;
+    pfmctx->frame_rate = 0.0;
+    bzero(pfmctx->video_codec, sizeof(pfmctx->video_codec));
+
+    // initialize audio part
+    pfmctx->audio_stream_index = -1;
+    pfmctx->audio_channels = 0;
+    pfmctx->audio_sample_rate = 0;
+    pfmctx->audio_bitrate = 0;
+    bzero(pfmctx->audio_codec, sizeof(pfmctx->audio_codec));
+
+    // for some media file which got mulitple audio stream
+    pfmctx->extra_audio_stream_index = -1;
+    pfmctx->extra_audio_channels = 0;
+    pfmctx->extra_audio_sample_rate = 0;
+    pfmctx->extra_audio_bitrate = 0;
+    bzero(pfmctx->extra_audio_codec, sizeof(pfmctx->extra_audio_codec));
+
+    pfmctx->duration = av_fmt_ctx->duration / AV_TIME_BASE;
+    for (index = 0; index < stream_count; index ++) {
+        struct AVCodec *av_codec = NULL;
+        av_stream = av_fmt_ctx->streams[index];
+        av_ctx = av_stream->codec;
+        cid = av_ctx->codec_id;
+        if (cid == CODEC_ID_NONE) {
+            continue;
+        } else {
+            av_codec = avcodec_find_decoder(cid);
+            if (av_codec == NULL) {
+                zend_error(E_ERROR, "can not find decoder by decoder id.\n");
+                return -1;
+            }
+
+            res = avcodec_open2(av_ctx, av_codec, NULL);
+            if (AVERROR(res) < 0) {
+                zend_error(E_ERROR, "can not open decoder.\n");
+                return -1;
+            }
+
+            if (av_ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+                pfmctx->has_video = true;
+                pfmctx->video_stream_index = index;
+                pfmctx->width = av_ctx->width;
+                pfmctx->height = av_ctx->height;
+                pfmctx->video_bitrate = av_ctx->bit_rate;
+                snprintf(pfmctx->video_codec, 64, "%s", av_codec->name);
+
+                // get frame rate
+                if (av_stream->r_frame_rate.num && av_stream->r_frame_rate.den) {
+                    pfmctx->frame_rate = av_q2d(av_stream->r_frame_rate);
+                } else if (av_stream->time_base.num && av_stream->time_base.den) {
+                    pfmctx->frame_rate = 1.0 / av_q2d(av_stream->time_base);
+                } else if (av_stream->codec->time_base.num && av_stream->codec->time_base.den) {
+                    pfmctx->frame_rate = 1.0 / av_q2d(av_stream->codec->time_base);
+                }
+            } else if (av_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
+                audio_stream_count = audio_stream_count + 1;
+                if (audio_stream_count == 2) {
+                    pfmctx->has_extra_audio = true;
+                    pfmctx->extra_audio_stream_index = index;
+                    pfmctx->extra_audio_sample_rate = av_ctx->sample_rate;
+                    pfmctx->extra_audio_channels = av_ctx->channels;
+                    pfmctx->extra_audio_bitrate = av_ctx->bit_rate;
+                    snprintf(pfmctx->extra_audio_codec, 64, "%s", av_codec->name);
+                } else {
+                    pfmctx->has_audio = true;
+                    pfmctx->audio_stream_index = index;
+                    pfmctx->audio_sample_rate = av_ctx->sample_rate;
+                    pfmctx->audio_channels = av_ctx->channels;
+                    pfmctx->audio_bitrate = av_ctx->bit_rate;
+                    snprintf(pfmctx->audio_codec, 64, "%s", av_codec->name);
+                }
+            }
+        }
+    }
 
     return 0;
 }
@@ -591,7 +656,7 @@ ZEND_METHOD(ffmpeg, get_media_duration)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_DOUBLE(_ffmpeg_media_get_duration(pfmctx->av_fmt_ctx));    
+    RETURN_DOUBLE(pfmctx->duration);    
 }
 
 // function to check if media file has video
@@ -609,7 +674,7 @@ ZEND_METHOD(ffmpeg, has_video)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_BOOL(_ffmpeg_media_has_media_type(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO));
+    RETURN_BOOL(pfmctx->has_video);
 }
 
 // function to check if media file has audio
@@ -627,7 +692,7 @@ ZEND_METHOD(ffmpeg, has_audio)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_BOOL(_ffmpeg_media_has_media_type(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO));
+    RETURN_BOOL(pfmctx->has_audio);
 }
 
 ZEND_METHOD(ffmpeg, get_media_video_bitrate)
@@ -644,7 +709,7 @@ ZEND_METHOD(ffmpeg, get_media_video_bitrate)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_DOUBLE(_ffmpeg_media_get_bitrate(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO));
+    RETURN_DOUBLE(pfmctx->video_bitrate);
 }
 
 ZEND_METHOD(ffmpeg, get_media_audio_bitrate)
@@ -661,7 +726,7 @@ ZEND_METHOD(ffmpeg, get_media_audio_bitrate)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_DOUBLE(_ffmpeg_media_get_bitrate(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO));
+    RETURN_DOUBLE(pfmctx->audio_bitrate);
 }
 
 ZEND_METHOD(ffmpeg, get_media_frame_height)
@@ -678,7 +743,7 @@ ZEND_METHOD(ffmpeg, get_media_frame_height)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_LONG(_ffmpeg_media_get_video_frame_shape(pfmctx->av_fmt_ctx, "height"));
+    RETURN_LONG(pfmctx->height);
 }
 
 ZEND_METHOD(ffmpeg, get_media_frame_width)
@@ -695,7 +760,7 @@ ZEND_METHOD(ffmpeg, get_media_frame_width)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_LONG(_ffmpeg_media_get_video_frame_shape(pfmctx->av_fmt_ctx, "width"));
+    RETURN_LONG(pfmctx->width);
 }
 
 ZEND_METHOD(ffmpeg, get_media_video_codec)
@@ -713,8 +778,7 @@ ZEND_METHOD(ffmpeg, get_media_video_codec)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    _ffmpeg_media_get_codec_name(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_VIDEO, codec_name);
-    RETURN_STRINGL(codec_name, strlen(codec_name), true); // use RETURN_STRINGL is more safe and avoid the segement fault
+    RETURN_STRINGL(pfmctx->video_codec, strlen(pfmctx->video_codec), true); // use RETURN_STRINGL is more safe and avoid the segement fault
 }
 
 ZEND_METHOD(ffmpeg, get_media_audio_codec)
@@ -732,8 +796,7 @@ ZEND_METHOD(ffmpeg, get_media_audio_codec)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    _ffmpeg_media_get_codec_name(pfmctx->av_fmt_ctx, AVMEDIA_TYPE_AUDIO, codec_name);
-    RETURN_STRINGL(codec_name, strlen(codec_name), true); // use RETURN_STRINGL is more safe and avoid the segement fault
+    RETURN_STRINGL(pfmctx->audio_codec, strlen(pfmctx->audio_codec), true); // use RETURN_STRINGL is more safe and avoid the segement fault
 }
 
 ZEND_METHOD(ffmpeg, get_media_frame_rate)
@@ -751,7 +814,7 @@ ZEND_METHOD(ffmpeg, get_media_frame_rate)
         ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
     }
 
-    RETURN_DOUBLE(_ffmpeg_media_get_framerate(pfmctx->av_fmt_ctx));
+    RETURN_DOUBLE(pfmctx->frame_rate);
 }
 
 ZEND_METHOD(ffmpeg, get_media_image)

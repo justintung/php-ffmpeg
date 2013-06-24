@@ -35,6 +35,26 @@
 // define resource structure
 typedef struct ffmpeg_media_context {
 AVFormatContext *av_fmt_ctx;
+bool has_video;
+bool has_audio;
+bool has_extra_audio;
+int duration;
+int video_stream_index;
+int width;
+int height;
+int video_bitrate;
+double frame_rate;
+char video_codec[64];
+int audio_stream_index;
+int audio_sample_rate;
+int audio_channels;
+int audio_bitrate;
+char audio_codec[64];
+int extra_audio_stream_index;
+int extra_audio_bitrate;
+int extra_audio_sample_rate;
+int extra_audio_channels;
+char extra_audio_codec[64];
 long php_resource_id;
 } ffmpeg_media_context, *pffmpeg_media_context;
 
@@ -54,5 +74,6 @@ ZEND_METHOD(ffmpeg, get_media_frame_width);
 ZEND_METHOD(ffmpeg, get_media_video_codec);
 ZEND_METHOD(ffmpeg, get_media_audio_codec);
 ZEND_METHOD(ffmpeg, get_media_frame_rate);
+ZEND_METHOD(ffmpeg, get_media_image);
 
 #endif
