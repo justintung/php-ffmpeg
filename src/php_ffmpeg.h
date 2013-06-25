@@ -43,6 +43,7 @@ int video_stream_index;
 int width;
 int height;
 int video_bitrate;
+double sample_aspect_ratio;
 double frame_rate;
 char video_codec[64];
 int audio_stream_index;
@@ -75,5 +76,8 @@ ZEND_METHOD(ffmpeg, get_media_video_codec);
 ZEND_METHOD(ffmpeg, get_media_audio_codec);
 ZEND_METHOD(ffmpeg, get_media_frame_rate);
 ZEND_METHOD(ffmpeg, get_media_image);
+ZEND_METHOD(ffmpeg, get_media_audio_channels);
+ZEND_METHOD(ffmpeg, get_media_audio_sample_rate);
+ZEND_METHOD(ffmpeg, get_media_sample_aspect_ratio);
 
 #endif

@@ -21,6 +21,9 @@ zend_function_entry ffmpeg_class_functions_entry[] = {
     ZEND_ME(ffmpeg, get_media_audio_codec, NULL, 0)
     ZEND_ME(ffmpeg, get_media_frame_rate, NULL, 0)
     ZEND_ME(ffmpeg, get_media_image, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_audio_channels, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_audio_sample_rate, NULL, 0)
+    ZEND_ME(ffmpeg, get_media_sample_aspect_ratio, NULL, 0)
     {NULL, NULL, NULL, 0, 0}
 };
 
@@ -118,6 +121,7 @@ static int _ffmpeg_media_open_context(struct ffmpeg_media_context *pfmctx, const
     pfmctx->height = 0;
     pfmctx->video_bitrate = 0;
     pfmctx->frame_rate = 0.0;
+    pfmctx->sample_aspect_ratio = 0.0;
     bzero(pfmctx->video_codec, sizeof(pfmctx->video_codec));
 
     // initialize audio part
@@ -171,6 +175,14 @@ static int _ffmpeg_media_open_context(struct ffmpeg_media_context *pfmctx, const
                 } else if (av_stream->codec->time_base.num && av_stream->codec->time_base.den) {
                     pfmctx->frame_rate = 1.0 / av_q2d(av_stream->codec->time_base);
                 }
+
+                // get sample aspect ratio
+                if (av_stream->sample_aspect_ratio.num && av_stream->sample_aspect_ratio.num) {
+                    pfmctx->sample_aspect_ratio = av_q2d(av_stream->sample_aspect_ratio);
+                } else if (av_stream->codec->sample_aspect_ratio.num && av_stream->codec->sample_aspect_ratio.den) {
+                    pfmctx->sample_aspect_ratio = 1.0 / av_q2d(av_stream->codec->sample_aspect_ratio);
+                }
+
             } else if (av_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
                 audio_stream_count = audio_stream_count + 1;
                 if (audio_stream_count == 2) {
@@ -628,6 +640,60 @@ ZEND_METHOD(ffmpeg, get_media_frame_rate)
     }
 
     RETURN_DOUBLE(pfmctx->frame_rate);
+}
+
+ZEND_METHOD(ffmpeg, get_media_audio_channels)
+{
+    int res = 0;
+    double frame_rate = 0.0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_LONG(pfmctx->audio_channels);
+}
+
+ZEND_METHOD(ffmpeg, get_media_audio_sample_rate)
+{
+    int res = 0;
+    double frame_rate = 0.0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_LONG(pfmctx->audio_sample_rate);
+}
+
+ZEND_METHOD(ffmpeg, get_media_sample_aspect_ratio)
+{
+    int res = 0;
+    double frame_rate = 0.0;
+    zval **resource = NULL;
+    struct ffmpeg_media_context *pfmctx = NULL;
+
+    res = zend_hash_find(Z_OBJPROP_P(getThis()), FFMPEG_PHP_EXTNAME, sizeof(FFMPEG_PHP_EXTNAME), (void **)&resource);
+    if (res == FAILURE) {
+        zend_error(E_ERROR, "can not get resource from hash table.\n");
+        RETURN_FALSE;
+    } else {
+        ZEND_FETCH_RESOURCE(pfmctx, ffmpeg_media_context*, resource, -1, FFMPEG_PHP_EXTNAME, ffmpeg_media_handler);
+    }
+
+    RETURN_DOUBLE(pfmctx->sample_aspect_ratio);
 }
 
 ZEND_METHOD(ffmpeg, get_media_image)
